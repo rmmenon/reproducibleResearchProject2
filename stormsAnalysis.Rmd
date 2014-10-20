@@ -4,8 +4,13 @@
 
 In this report, we aim to analyse the economic and health consequences of Storms in USA. In particular, we address the following two questions:
 
-1. Across the United States, which types of events are most harmful with respect to population health?
-2. Across the United States, which types of events have the greatest economic consequences?
+* Across the United States, which types of events are most harmful with respect to population health?
+* Across the United States, which types of events have the greatest economic consequences?
+
+Our conclusion is that:
+
+* The top event that causes most health damage(fatalities/injuries) is **TORNADO**. 
+* The top event that causes most economic damage (properties and crop related damages) is **FLOOD**.
 
 ## The Raw Data Source
 
@@ -20,18 +25,24 @@ The events in the database start in the year 1950 and end in November 2011. In t
 
 ## Data Processing
 We load the required libararies that we use throughout our analysis
-```{r,echo=TRUE}
+```{r libraries,echo=TRUE}
 library(dplyr)
 library(xtable)
+library(stringr)
+library(ggplot2)
 ```
-We dowload the data and read the zip file into a variable *storm*
-```{r,echo=TRUE, cache=TRUE}
-download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",destfile="Storms.csv.bz2", method="curl", mode="wb")
+We download the data and read the zip file into a variable *storm*
+```{r downloadData,echo=TRUE, cache=TRUE}
+download.file(
+    "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+    destfile="Storms.csv.bz2", 
+    method="curl", 
+    mode="wb")
 storm <- read.csv(bzfile("Storms.csv.bz2"))
 ```
 
 We then process the names of the data frame to lowercase and clean it up a bit
-```{r,echo=TRUE}
+```{r  mangleName,echo=TRUE}
 names(storm)
 lowerCaseNames <- gsub("(.*)", "\\L\\1", names(storm), perl=TRUE)
 finalNames = gsub( "__",'', lowerCaseNames)
@@ -39,9 +50,21 @@ finalNames = gsub( "_$",'', finalNames)
 names(storm) = finalNames
 names(storm)
 ```
+
+Since the evtype (event type) column is central to our analysis, we clean it up by ensuring that we trim leading and ending spaces and replace multiple spaces with a single space to normalize the value.
+```{r normalizeEventType,echo=TRUE, cache=TRUE}
+# print number of distinct event values before we normalize
+nrow(storm%>%group_by(evtype) %>%summarize())
+# replace multiple spaces with single space, remove leading/trailing spaces
+storm$evtype = sapply(gsub("[ ]+", " ", storm$evtype), str_trim)
+# print number of distinct event values after we normalize
+nrow(storm%>%group_by(evtype) %>%summarize())
+```
+This reduces the number of distinct evtype values from **985** to **970**.
+
 ### Health Impacts Analysis
 To analyaze the health impacts of the storms based on event type, we assume that the main health impacts are represented by the columns *fatalities* and *injuries*. So we do sum up fatalities and injuries and sort them in descending order of number of fatalities and injuries
-```{r, echo=TRUE}
+```{r analyzeHealthImpact, echo=TRUE,cache=TRUE}
 storm_health_impact <- storm %>% group_by(evtype) %>% 
     summarize(total_fatalities = sum(fatalities),
               total_injuries=sum(injuries)
@@ -52,15 +75,141 @@ head(storm_health_impact, 5)
 ```
 From this we can conclude that the event **"TORNADO"** has the biggest impact in terms of health in USA
 
+We would like to compare relative values of each event's impact on health. Since there are 970 different event types, we will simplify our analysis. We club all events that have fatalities < 100, into "OTHER" evtype category. Following R code does this:
+```{r healthFatalitiesAnalysis,echo=TRUE}
+storm_top_fatalities <- storm_health_impact %>% filter(total_fatalities >=100)
+storm_other = storm_health_impact %>% filter(
+    total_fatalities < 100) %>% summarize(total_fatalities=sum(total_fatalities),
+                                        total_injuries=sum(total_injuries))
+storm_other <- cbind("OTHER", storm_other)
+names(storm_other) <- names(storm_top_fatalities)
+storm_summarized <- rbind(storm_top_fatalities, storm_other)
+```
+We then plot the fatalities against event type.
+```{r healthFatalitiesPlot,echo=TRUE}
+ggplot(data=storm_summarized, aes(x=evtype, y=total_fatalities)) + 
+    geom_bar(stat="identity") + coord_flip() + 
+    ylab("Total Fatalities") + xlab("Event Type") + 
+    ggtitle("Plot of top fatalities by event")
+```
+#### Figure 1: Plot of top events causing fatalities against number of fatalities
+We conclude that the top damaging event TORNADO isalmost 3 times as damaging in terms of fatalities as the next top event (EXCESSIVE HEAT).
+
+We do a similar analysis on injuries, clubbing all injuries >= 500 into the categories OTHER.
+
+```{r healthInjuriesAnalysis,echo=TRUE}
+storm_top_injuries <- storm_health_impact %>% filter(total_injuries >=500)
+storm_other = storm_health_impact %>% filter(
+    total_injuries < 500) %>% summarize(total_fatalities=sum(total_fatalities),
+                                        total_injuries=sum(total_injuries))
+storm_other <- cbind("OTHER", storm_other)
+names(storm_other) <- names(storm_top_injuries)
+storm_summarized <- rbind(storm_top_injuries, storm_other)
+```
+
+We plot the injuries against event type.
+```{r healthInjuriesPlot,echo=TRUE}
+ggplot(data=storm_summarized, aes(x=evtype, y=total_injuries)) + 
+    geom_bar(stat="identity") + coord_flip() + 
+    ylab("Total Injuries") + xlab("Event Type") + 
+    ggtitle("Plot of top injuries by event")
+```
+#### Figure 2: Plot of top events causing injuries against number of injuries
+We notice that the top event (TORNADO) is almost 14 times as damaging compared to the second event (EXCESSIVE HEAT) (excluding the "OTHER" category).
+
 ### Economic Impact Analysis
 
-## Results
-Assuming that injuries and fatalities represent the main impact on health, we can see that the event **TORNADO** has the biggest impact on the USA by far.
+For economic impact analysis, we consider four variables:
+propdmg, propdmgexp - these represent the property damage estimates
+cropdmg, cropdmgexp - these represent the crop damage estimates
 
-```{r,echo=TRUE, results='asis'}
+The propdmgexp and cropdmgexp tell us how to interpret the damage. Let us see what values these two columns have:
+```{r explorePropCropDmg,echo=TRUE}
+storm %>% group_by(cropdmgexp) %>%summarize()
+storm %>% group_by(propdmgexp) %>%summarize()
+```
+We explore the values of the propdmgexp/cropdmgexp in case they are "", "+", "-" or"?" to see what we can assume.
+```{r explorePropCropDmg1,echo=TRUE}
+storm %>% filter(propdmgexp=="?" | propdmgexp=="" | 
+                     propdmgexp=="-" | propdmgexp=="+") %>% group_by(
+                         propdmg, propdmgexp) %>% summarize(n())
+storm %>% filter(cropdmgexp=="?" | 
+                     cropdmgexp=="") %>% group_by(
+                         cropdmg, cropdmgexp) %>% summarize(n())
+```
+We interpret the values of propdmgexp and cropdmgexp as follows:
+* If the value of propdmgexp or cropdmgexp is ?, "+", "-" or ""(blank) then, the exponent is 1. Given the numbers above, these assumptions should not have any significant impact on our calculations.
+* if the value is "h" or "H" then we multiply propdmg/cropdmg by 10^2 (10 raised to the power 2)
+* if the value is "k" or "K" then we multiply propdmg/cropdmg by 10^3 (10 raised to the power 3)
+* if the value is "m" or "M" then we multiply propdmg/cropdmg by 10^6 (10 raised to the power 6)
+* if the value is "B" or "b" then we multiply propdmg/cropdmg by 10^9 (10 raised to the power 9)
+
+We then write a function that gives us the absolute value of a damage given the damage number and the exponent and apply that function to calculate property damages and crop damages by event. We sort these by descending values of damages to get the top events that cause the most economic damage.
+```{r analyzeTotalDamage, echo=TRUE, cache=TRUE}
+absoluteDollarValue <- function (damage, exponent) {
+    exponent = tolower(str_trim(exponent))
+    if (identical(exponent,"h")) {
+      damage * 100
+    } else if (identical(exponent,"k")) {
+      damage * 1000
+    } else if (identical(exponent,"m")) {
+      damage * 1000000
+    } else if (identical(exponent,exponent == "b")) {
+      damage * 1000000000
+    } else {
+      damage
+    }
+}
+
+total_damage <- storm %>% group_by(
+    evtype, propdmg, propdmgexp, cropdmg, cropdmgexp) %>% summarize(
+        totalpropdmg=sum(absoluteDollarValue(propdmg,propdmgexp)), 
+        totalcropdmg=sum(absoluteDollarValue(cropdmg,cropdmgexp)))
+# sum up total damage and sort them in descending order of damage
+total_damage_by_event <- total_damage %>% group_by(evtype) %>% summarize(totaldmg=sum(totalpropdmg+totalcropdmg)) %>% arrange(desc(totaldmg))
+# print top 10
+head(total_damage_by_event, 10)
+```
+
+From this we can conclude that the event **"FLOOD"** has the biggest economic impact in USA.
+
+We would like to compare relative values of each event's impact on economy. Since there are 970 different event types, we will simplify our analysis. We club all events that have damajex < 1 billion, into "OTHER" evtype category. Following R code does this:
+```{r economicImpactAnalysis,echo=TRUE}
+storm_top_damage <- total_damage_by_event %>% filter(totaldmg >= 1000000000)
+storm_other = total_damage_by_event %>% filter(
+    totaldmg < 1000000000) %>% summarize(totaldmg=sum(totaldmg))
+storm_other <- cbind("OTHER", storm_other)
+names(storm_other) <- names(storm_top_damage)
+storm_summarized <- rbind(storm_top_damage, storm_other)
+```
+We then plot the fatalities against event type.
+```{r economicImpactPlot,echo=TRUE}
+ggplot(data=storm_summarized, aes(x=evtype, y=totaldmg)) + 
+    geom_bar(stat="identity") + coord_flip() + 
+    ylab("Total Damage") + xlab("Event Type") + 
+    ggtitle("Plot of top economic damage causing events")
+```
+#### Figure 3: Plot of top economic damage causing events
+
+We note that the top event (flood) is almost twice as damaging as the next event excluding the "OTHER" category(DROUGHT).
+
+## Results
+Assuming that injuries and fatalities represent the main impact on health, we can see that the event **TORNADO** has the biggest impact on the USA by far. The next event in this list is **EXCESSIVE HEAT**.
+
+```{r printTable1,echo=TRUE, results='asis'}
 top_10 = head(storm_health_impact,10)
 names(top_10) <- c("Event Type", "Fatalities", "Injuries")
 #kable(top_10)
 print(xtable(top_10), type="html")
 ```
 #### Table 1: Top 10 Event Types causing fatalities and Injuries
+
+From the table below, we can see that the event **FLOOD** has the biggest impact on the USA by far. The next event in this list is **HURRICANE**.
+
+```{r printTable2,echo=TRUE, results='asis'}
+top_10 = head(total_damage_by_event,10)
+names(top_10) <- c("Event Type", "Total Damage")
+#kable(top_10)
+print(xtable(top_10), type="html")
+```
+#### Table 2: Top 10 Event Types causing economic damage
